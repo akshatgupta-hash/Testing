@@ -1,6 +1,7 @@
 name: Resolve merge conflicts
 
 on:
+  workflow_dispatch:
   # Cron cannot express a rolling 15-hour interval, so a cache key below
   # admits the first scheduled run in each 15-hour epoch slot.
   schedule:
@@ -35,6 +36,10 @@ jobs:
       - name: Admit one run per slot
         id: gate
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
             echo "should_run=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -44,7 +49,7 @@ jobs:
           date -u +%FT%TZ > .merge-conflict-resolver-slot/started-at
 
       - name: Remember this slot
-        if: steps.gate.outputs.should_run == 'true'
+        if: steps.gate.outputs.should_run == 'true' && github.event_name != 'workflow_dispatch'
         uses: actions/cache/save@v4
         with:
           path: .merge-conflict-resolver-slot
@@ -194,9 +199,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BASE_SHA: ${{ steps.ctx.outputs.base_sha }}
         run: |
-          BOT_ID=$(gh api 'users/braincompany-ci-failure-autofix%5Bbot%5D' --jq '.id')
-          git -C pr config user.name "braincompany-ci-failure-autofix[bot]"
-          git -C pr config user.email "${BOT_ID}+braincompany-ci-failure-autofix[bot]@users.noreply.github.com"
+          BOT_ID=$(gh api 'users/resolver-akshatgupta%5Bbot%5D' --jq '.id')
+          git -C pr config user.name "resolver-akshatgupta[bot]"
+          git -C pr config user.email "${BOT_ID}+resolver-akshatgupta[bot]@users.noreply.github.com"
           git -C pr fetch --no-tags origin "$BASE_SHA"
 
       - name: Resolve only conflict blocks
