@@ -1,0 +1,264 @@
+name: Resolve merge conflicts
+
+on:
+  # Cron cannot express a rolling 15-hour interval, so a cache key below
+  # admits the first scheduled run in each 15-hour epoch slot.
+  schedule:
+    - cron: '17 */3 * * *'
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: merge-conflict-resolver
+  cancel-in-progress: false
+
+jobs:
+  cadence:
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.gate.outputs.should_run }}
+    steps:
+      - name: Calculate the 15-hour slot
+        id: slot
+        run: echo "key=merge-conflict-resolver-$(( $(date -u +%s) / 54000 ))" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether this slot already ran
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .merge-conflict-resolver-slot
+          key: ${{ steps.slot.outputs.key }}
+
+      - name: Admit one run per slot
+        id: gate
+        run: |
+          if [ "${{ steps.cache.outputs.cache-hit }}" = "true" ]; then
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "should_run=true" >> "$GITHUB_OUTPUT"
+          mkdir .merge-conflict-resolver-slot
+          date -u +%FT%TZ > .merge-conflict-resolver-slot/started-at
+
+      - name: Remember this slot
+        if: steps.gate.outputs.should_run == 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .merge-conflict-resolver-slot
+          key: ${{ steps.slot.outputs.key }}
+
+  discover:
+    needs: cadence
+    if: needs.cadence.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.prs.outputs.count }}
+      matrix: ${{ steps.prs.outputs.matrix }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.CI_AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.CI_AUTOFIX_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-pull-requests: read
+
+      - name: Find recent conflicting PRs
+        id: prs
+        uses: actions/github-script@v9
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const cutoff = Date.now() - 5 * 24 * 60 * 60 * 1000;
+            const listed = await github.paginate(github.rest.pulls.list, {
+              owner, repo, state: 'open', per_page: 100,
+            });
+
+            const candidates = [];
+            for (const listedPr of listed) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner, repo, pull_number: listedPr.number,
+              });
+              if (pr.state !== 'open' || pr.head.repo?.full_name !== `${owner}/${repo}`) {
+                continue;
+              }
+              if (pr.labels.some(label => label.name === 'no-autofix')) {
+                continue;
+              }
+              const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner, repo, username: pr.user.login,
+              });
+              if (!['admin', 'maintain', 'write'].includes(access.permission)) {
+                continue;
+              }
+              const { data: commit } = await github.rest.repos.getCommit({
+                owner, repo, ref: pr.head.sha,
+              });
+              const committedAt = commit.commit.committer?.date || commit.commit.author?.date;
+              if (!committedAt || Date.parse(committedAt) < cutoff) {
+                continue;
+              }
+              if (pr.mergeable === true) {
+                continue;
+              }
+              candidates.push({ pr: pr.number });
+            }
+
+            core.info(`Found ${candidates.length} eligible PR(s).`);
+            core.setOutput('count', String(candidates.length));
+            core.setOutput('matrix', JSON.stringify({ include: candidates }));
+
+  resolve:
+    needs: discover
+    if: needs.discover.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.CI_AUTOFIX_APP_ID }}
+          private-key: ${{ secrets.CI_AUTOFIX_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: read
+
+      - name: Capture trusted PR metadata
+        id: ctx
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ matrix.pr }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const fs = require('fs');
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            if (pr.state !== 'open' || pr.head.repo?.full_name !== `${owner}/${repo}`) {
+              core.setFailed('PR is no longer an open same-repository PR.');
+              return;
+            }
+            if (pr.labels.some(label => label.name === 'no-autofix')) {
+              core.setFailed('PR now has the no-autofix label.');
+              return;
+            }
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: pr.user.login,
+            });
+            if (!['admin', 'maintain', 'write'].includes(access.permission)) {
+              core.setFailed('PR author no longer has write access.');
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner, repo, pull_number, per_page: 100,
+            });
+            fs.writeFileSync('allowed-files.json', JSON.stringify(
+              files.map(file => file.filename)
+            ));
+            core.setOutput('head_branch', pr.head.ref);
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_branch', pr.base.ref);
+            core.setOutput('base_sha', pr.base.sha);
+
+      # Keep the trusted resolver separate from the untrusted PR checkout.
+      - name: Checkout resolver
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          path: control
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Checkout exact PR head
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ steps.ctx.outputs.head_sha }}
+          path: pr
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+          submodules: false
+          lfs: false
+
+      - name: Configure merge commit
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          BASE_SHA: ${{ steps.ctx.outputs.base_sha }}
+        run: |
+          BOT_ID=$(gh api 'users/braincompany-ci-failure-autofix%5Bbot%5D' --jq '.id')
+          git -C pr config user.name "braincompany-ci-failure-autofix[bot]"
+          git -C pr config user.email "${BOT_ID}+braincompany-ci-failure-autofix[bot]@users.noreply.github.com"
+          git -C pr fetch --no-tags origin "$BASE_SHA"
+
+      - name: Resolve only conflict blocks
+        id: resolution
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.MERGE_CONFLICT_MODEL || 'claude-opus-5' }}
+          BASE_SHA: ${{ steps.ctx.outputs.base_sha }}
+          EXPECTED_HEAD: ${{ steps.ctx.outputs.head_sha }}
+          PR_NUMBER: ${{ matrix.pr }}
+        run: |
+          python3 control/scripts/resolve_merge_conflicts.py \
+            --repo pr \
+            --base "$BASE_SHA" \
+            --allowed-files allowed-files.json \
+            --pr-number "$PR_NUMBER"
+          if [ "$(git -C pr rev-parse HEAD)" = "$EXPECTED_HEAD" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "resolved=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Revalidate PR before push
+        if: steps.resolution.outputs.resolved == 'true'
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ matrix.pr }}
+          EXPECTED_HEAD: ${{ steps.ctx.outputs.head_sha }}
+          EXPECTED_BASE: ${{ steps.ctx.outputs.base_sha }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = Number(process.env.PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
+              owner, repo, username: pr.user.login,
+            });
+            if (
+              pr.state !== 'open' ||
+              pr.head.repo?.full_name !== `${owner}/${repo}` ||
+              pr.head.sha !== process.env.EXPECTED_HEAD ||
+              pr.base.sha !== process.env.EXPECTED_BASE ||
+              pr.labels.some(label => label.name === 'no-autofix') ||
+              !['admin', 'maintain', 'write'].includes(access.permission)
+            ) {
+              core.setFailed('PR head, base, state, repository, or author access changed.');
+            }
+
+      - name: Push if both refs are unchanged
+        if: steps.resolution.outputs.resolved == 'true'
+        env:
+          HEAD_BRANCH: ${{ steps.ctx.outputs.head_branch }}
+          EXPECTED_HEAD: ${{ steps.ctx.outputs.head_sha }}
+          BASE_BRANCH: ${{ steps.ctx.outputs.base_branch }}
+          EXPECTED_BASE: ${{ steps.ctx.outputs.base_sha }}
+        run: |
+          git -C pr fetch --no-tags origin \
+            "+refs/heads/$HEAD_BRANCH:refs/remotes/origin/resolver-head" \
+            "+refs/heads/$BASE_BRANCH:refs/remotes/origin/resolver-base"
+          test "$(git -C pr rev-parse refs/remotes/origin/resolver-head)" = "$EXPECTED_HEAD"
+          test "$(git -C pr rev-parse refs/remotes/origin/resolver-base)" = "$EXPECTED_BASE"
+          git -C pr push \
+            --force-with-lease="refs/heads/$HEAD_BRANCH:$EXPECTED_HEAD" \
+            origin "HEAD:refs/heads/$HEAD_BRANCH"
