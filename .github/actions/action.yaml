@@ -1,0 +1,28 @@
+name: Additive Type Test Action
+description: Placeholder composite action for the additiveType branch.
+
+inputs:
+  greeting:
+    description: Greeting phrase to print
+    required: false
+    default: hey from additiveType
+  target:
+    description: Who to greet
+    required: false
+    default: world
+
+outputs:
+  full_greeting:
+    description: The full greeting string that was printed
+    value: ${{ steps.greet.outputs.full_greeting }}
+
+runs:
+  using: composite
+  steps:
+    - name: Build and print the greeting
+      id: greet
+      shell: bash
+      run: |
+        full="${{ inputs.greeting }}, ${{ inputs.target }}!"
+        echo "$full"
+        echo "full_greeting=$full" >> "$GITHUB_OUTPUT"
