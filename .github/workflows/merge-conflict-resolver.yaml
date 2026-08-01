@@ -241,7 +241,7 @@ jobs:
           fi
 
       - name: Comment on PR when resolver fails
-        if: steps.resolution.outcome == 'failure' && steps.resolution.outputs.error_message != ''
+        if: failure() && steps.resolution.outputs.error_message != ''
         uses: actions/github-script@v9
         env:
           PR_NUMBER: ${{ matrix.pr }}
