@@ -135,7 +135,7 @@ jobs:
           app-id: ${{ secrets.CI_AUTOFIX_APP_ID }}
           private-key: ${{ secrets.CI_AUTOFIX_APP_PRIVATE_KEY }}
           permission-contents: write
-          permission-pull-requests: read
+          permission-pull-requests: write
 
       - name: Capture trusted PR metadata
         id: ctx
@@ -213,16 +213,56 @@ jobs:
           EXPECTED_HEAD: ${{ steps.ctx.outputs.head_sha }}
           PR_NUMBER: ${{ matrix.pr }}
         run: |
+          set +e
           python3 control/scripts/resolve_merge_conflicts.py \
             --repo pr \
             --base "$BASE_SHA" \
             --allowed-files allowed-files.json \
-            --pr-number "$PR_NUMBER"
+            --pr-number "$PR_NUMBER" 2>resolver-stderr.txt
+          EXIT_CODE=$?
+          cat resolver-stderr.txt >&2
+          if [ $EXIT_CODE -ne 0 ]; then
+            ERROR_MSG=$(grep -E '^ERROR: ' resolver-stderr.txt | tail -n 1 | sed 's/^ERROR: //')
+            if [ -z "$ERROR_MSG" ]; then
+              ERROR_MSG="resolver failed with exit code $EXIT_CODE"
+            fi
+            {
+              echo "error_message<<RESOLVER_EOF"
+              echo "$ERROR_MSG"
+              echo "RESOLVER_EOF"
+            } >> "$GITHUB_OUTPUT"
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            exit $EXIT_CODE
+          fi
           if [ "$(git -C pr rev-parse HEAD)" = "$EXPECTED_HEAD" ]; then
             echo "resolved=false" >> "$GITHUB_OUTPUT"
           else
             echo "resolved=true" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Comment on PR when resolver fails
+        if: steps.resolution.outcome == 'failure' && steps.resolution.outputs.error_message != ''
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ matrix.pr }}
+          ERROR_MESSAGE: ${{ steps.resolution.outputs.error_message }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const body = [
+              'The merge conflict resolver could not resolve this PR automatically:',
+              '',
+              '```',
+              process.env.ERROR_MESSAGE,
+              '```',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body,
+            });
 
       - name: Revalidate PR before push
         if: steps.resolution.outputs.resolved == 'true'
