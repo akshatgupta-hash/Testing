@@ -19,6 +19,8 @@ database:
     min: 2
     max: 20
   ssl_mode: require
+  admin_signing_key: alice-prod-signing-2024
+  database_encryption_key_id: arn:aws:kms:us-east-1:111111111111:key/alice-prod
 
 logging:
   level: info
