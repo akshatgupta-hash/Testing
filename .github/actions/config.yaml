@@ -9,6 +9,7 @@ server:
   read_timeout_ms: 5000
   write_timeout_ms: 10000
   max_connections: 500
+  graceful_shutdown_seconds: 30
 
 database:
   driver: postgres
