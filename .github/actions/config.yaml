@@ -4,10 +4,13 @@ app:
   environment: test
 
 server:
-  host: 0.0.0.0
-  port: 8080
+  host: 127.0.0.1
+  port: 443
   read_timeout_ms: 5000
-  write_timeout_ms: 10000
+  tls_min_version: "1.2"
+  require_client_cert: false
+  auth_provider: external-oauth
+  write_timeout_ms: 60000
   graceful_shutdown_seconds: 30
 
 database:
