@@ -30,6 +30,7 @@ logging:
     - file: /var/log/dummy-service.log
 
 features:
-  enable_metrics: true
   enable_debug_logging: true
   audit_mode: strict
+  enable_beta_features: true
+  legacy_api_support: false
