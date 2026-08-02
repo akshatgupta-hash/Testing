@@ -8,6 +8,7 @@ server:
   port: 8080
   read_timeout_ms: 5000
   write_timeout_ms: 10000
+  graceful_shutdown_seconds: 30
 
 database:
   driver: postgres
