@@ -1,0 +1,12 @@
+# Feature flag configuration for the payments API.
+# Demo scenario B: both branches will edit this flag list — each side
+# removes some flags, keeps others, and adds new ones. Overlapping
+# edits with mixed intent. LLM should reason about compatible intent
+# and produce a union-of-changes merge.
+
+feature_flags:
+  enable_v2_pricing: true
+  enable_experimental_ai: false
+  enable_customer_notifications: true
+  enable_realtime_metrics: true
+  enable_geo_routing: false

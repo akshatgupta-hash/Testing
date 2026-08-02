@@ -1,0 +1,22 @@
+# Payments API service configuration.
+# Demo scenario A: both branches will add different, compatible fields
+# to the database block. LLM should keep both additions (union merge).
+
+service:
+  name: payments-api
+  version: 1.2.0
+  region: us-east-1
+
+database:
+  host: db-primary.internal
+  port: 5432
+  username: payments_svc
+  pool:
+    min_connections: 5
+    max_connections: 50
+  statement_cache_size: 100
+
+cache:
+  provider: redis
+  cluster_endpoint: cache.internal:6379
+  ttl_seconds: 300

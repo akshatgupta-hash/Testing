@@ -1,0 +1,17 @@
+# Authentication and TLS security configuration.
+# Demo scenario C: both branches will change the SAME security-critical
+# keys to DIFFERENT values (auth provider, TLS version, MFA policy).
+# YAML cannot hold two values for one key, and picking either side is a
+# security-policy decision that requires human judgment.
+# LLM should return cannot_resolve → bot posts a failure comment on the PR.
+
+security:
+  auth_provider: auth0-oauth
+  tls_min_version: "1.1"
+  session_timeout_minutes: 480
+  require_mfa: false
+  allowed_origins:
+    - https://app.company.com
+    - https://legacy.company.com
+  api_key_rotation_days: 180
+  allow_password_auth: true
