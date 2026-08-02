@@ -218,8 +218,9 @@ jobs:
             --repo pr \
             --base "$BASE_SHA" \
             --allowed-files allowed-files.json \
-            --pr-number "$PR_NUMBER" 2>resolver-stderr.txt
+            --pr-number "$PR_NUMBER" 1>resolver-stdout.txt 2>resolver-stderr.txt
           EXIT_CODE=$?
+          cat resolver-stdout.txt
           cat resolver-stderr.txt >&2
           if [ $EXIT_CODE -ne 0 ]; then
             ERROR_MSG=$(grep -E '^ERROR: ' resolver-stderr.txt | tail -n 1 | sed 's/^ERROR: //')
@@ -238,6 +239,12 @@ jobs:
             echo "resolved=false" >> "$GITHUB_OUTPUT"
           else
             echo "resolved=true" >> "$GITHUB_OUTPUT"
+            SUMMARIES_JSON=$(python3 -c 'import json; print(json.dumps(json.load(open("resolver-stdout.txt")).get("summaries") or {}))')
+            {
+              echo "summaries<<SUMMARIES_EOF"
+              echo "$SUMMARIES_JSON"
+              echo "SUMMARIES_EOF"
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Comment on PR when resolver fails
@@ -307,3 +314,33 @@ jobs:
           git -C pr push \
             --force-with-lease="refs/heads/$HEAD_BRANCH:$EXPECTED_HEAD" \
             origin "HEAD:refs/heads/$HEAD_BRANCH"
+
+      - name: Comment resolution summary on PR
+        if: steps.resolution.outputs.resolved == 'true'
+        uses: actions/github-script@v9
+        env:
+          PR_NUMBER: ${{ matrix.pr }}
+          SUMMARIES_JSON: ${{ steps.resolution.outputs.summaries }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { owner, repo } = context.repo;
+            const summaries = JSON.parse(process.env.SUMMARIES_JSON || '{}');
+            const entries = Object.entries(summaries);
+            if (entries.length === 0) return;
+            const lines = [
+              'The merge conflict resolver applied the following resolutions:',
+              '',
+            ];
+            for (const [path, summary] of entries) {
+              lines.push('**`' + path + '`**');
+              lines.push('');
+              lines.push(summary);
+              lines.push('');
+            }
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: Number(process.env.PR_NUMBER),
+              body: lines.join('\n'),
+            });

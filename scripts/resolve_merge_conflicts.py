@@ -47,7 +47,7 @@ class ConflictBlock:
     newline: str
 
 
-Provider = Callable[[str, str, list[ConflictBlock]], dict[str, str]]
+Provider = Callable[[str, str, list[ConflictBlock]], tuple[dict[str, str], str]]
 
 
 def parse_conflicts(text: str) -> list[ConflictBlock]:
@@ -187,7 +187,7 @@ def load_conflict(repo: Path, path: str) -> tuple[str, list[ConflictBlock]]:
 def parse_anthropic_response(
     response: dict[str, Any],
     expected_ids: set[str],
-) -> dict[str, str]:
+) -> tuple[dict[str, str], str]:
     if response.get("stop_reason") != "end_turn":
         raise ResolverError("Anthropic response was refused or truncated")
     text = [
@@ -218,7 +218,11 @@ def parse_anthropic_response(
         resolutions[item["id"]] = item["replacement"]
     if set(resolutions) != expected_ids:
         raise ResolverError("Anthropic returned missing or unknown conflict IDs")
-    return resolutions
+
+    summary = result.get("summary")
+    if not isinstance(summary, str):
+        raise ResolverError("Anthropic returned invalid summary")
+    return resolutions, summary
 
 
 def ask_anthropic(
@@ -228,7 +232,7 @@ def ask_anthropic(
     path: str,
     text: str,
     blocks: list[ConflictBlock],
-) -> dict[str, str]:
+) -> tuple[dict[str, str], str]:
     conflicts = []
     for block in blocks:
         conflicts.append(
@@ -304,7 +308,7 @@ def resolve_repository(
     base: str,
     allowed_files: set[str],
     provider: Provider,
-) -> str:
+) -> tuple[str, dict[str, str]]:
     repo = repo.resolve()
     if git(repo, "status", "--porcelain").stdout:
         raise ResolverError("PR checkout is not clean")
@@ -340,7 +344,7 @@ def resolve_repository(
         if result.returncode == 0:
             if merge_started:
                 git(repo, "merge", "--abort")
-            return "no_conflicts"
+            return "no_conflicts", {}
 
         conflict_paths = nul_paths(repo, "diff", "--name-only", "--diff-filter=U", "-z")
         if not conflict_paths:
@@ -361,10 +365,11 @@ def resolve_repository(
         if sum(len(blocks) for _, blocks in loaded.values()) > MAX_CONFLICT_BLOCKS:
             raise ResolverError("too many conflict blocks for automatic resolution")
         planned: dict[str, str] = {}
+        summaries: dict[str, str] = {}
         for path, (text, blocks) in loaded.items():
-            planned[path] = apply_resolutions(
-                text, blocks, provider(path, text, blocks)
-            )
+            resolutions, summary = provider(path, text, blocks)
+            planned[path] = apply_resolutions(text, blocks, resolutions)
+            summaries[path] = summary
         for path, resolved in planned.items():
             (repo / path).write_bytes(resolved.encode())
 
@@ -392,7 +397,7 @@ def resolve_repository(
         parents = git(repo, "rev-list", "--parents", "-n", "1", "HEAD").stdout.split()
         if parents[1:] != [head, base_sha]:
             raise ResolverError("merge commit parents changed")
-        return "resolved"
+        return "resolved", summaries
     except Exception:
         if (
             merge_started
@@ -427,13 +432,15 @@ def main() -> int:
             path: str,
             text: str,
             blocks: list[ConflictBlock],
-        ) -> dict[str, str]:
+        ) -> tuple[dict[str, str], str]:
             return ask_anthropic(
                 api_key, args.model, args.pr_number, path, text, blocks
             )
 
-        status = resolve_repository(args.repo, args.base, set(allowed), provider)
-        print(json.dumps({"status": status}))
+        status, summaries = resolve_repository(
+            args.repo, args.base, set(allowed), provider
+        )
+        print(json.dumps({"status": status, "summaries": summaries}))
         return 0
     except (OSError, json.JSONDecodeError, ResolverError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
