@@ -31,5 +31,5 @@ logging:
 
 features:
   enable_metrics: true
-  enable_tracing: false
-  experimental_mode: false
+  enable_debug_logging: true
+  audit_mode: strict
