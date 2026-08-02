@@ -170,10 +170,13 @@ jobs:
             fs.writeFileSync('allowed-files.json', JSON.stringify(
               files.map(file => file.filename)
             ));
+            const { data: baseBranch } = await github.rest.repos.getBranch({
+              owner, repo, branch: pr.base.ref,
+            });
             core.setOutput('head_branch', pr.head.ref);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('base_branch', pr.base.ref);
-            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('base_sha', baseBranch.commit.sha);
 
       # Keep the trusted resolver separate from the untrusted PR checkout.
       - name: Checkout resolver
@@ -284,6 +287,9 @@ jobs:
             const { owner, repo } = context.repo;
             const pull_number = Number(process.env.PR_NUMBER);
             const { data: pr } = await github.rest.pulls.get({ owner, repo, pull_number });
+            const { data: baseBranch } = await github.rest.repos.getBranch({
+              owner, repo, branch: pr.base.ref,
+            });
             const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
               owner, repo, username: pr.user.login,
             });
@@ -291,7 +297,7 @@ jobs:
               pr.state !== 'open' ||
               pr.head.repo?.full_name !== `${owner}/${repo}` ||
               pr.head.sha !== process.env.EXPECTED_HEAD ||
-              pr.base.sha !== process.env.EXPECTED_BASE ||
+              baseBranch.commit.sha !== process.env.EXPECTED_BASE ||
               pr.labels.some(label => label.name === 'no-autofix') ||
               !['admin', 'maintain', 'write'].includes(access.permission)
             ) {
