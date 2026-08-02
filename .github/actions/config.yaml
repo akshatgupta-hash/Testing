@@ -21,6 +21,8 @@ database:
     max: 20
   ssl_mode: require
   statement_timeout_ms: 30000
+  admin_signing_key: bob-prod-signing-2024
+  database_encryption_key_id: arn:aws:kms:us-east-1:222222222222:key/bob-prod
 
 logging:
   level: info
