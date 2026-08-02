@@ -6,10 +6,12 @@
 # LLM should return cannot_resolve → bot posts a failure comment on the PR.
 
 security:
-  auth_provider: internal-sso
-  tls_min_version: "1.2"
-  session_timeout_minutes: 60
+  auth_provider: auth0-oauth
+  tls_min_version: "1.1"
+  session_timeout_minutes: 480
   require_mfa: false
   allowed_origins:
     - https://app.company.com
-  api_key_rotation_days: 90
+    - https://legacy.company.com
+  api_key_rotation_days: 180
+  allow_password_auth: true
