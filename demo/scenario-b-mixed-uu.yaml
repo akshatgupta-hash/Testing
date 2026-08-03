@@ -6,7 +6,7 @@
 
 feature_flags:
   enable_v2_pricing: true
-  enable_beta_dashboard: false
-  enable_legacy_export: true
   enable_experimental_ai: false
   enable_customer_notifications: true
+  enable_realtime_metrics: true
+  enable_geo_routing: false
