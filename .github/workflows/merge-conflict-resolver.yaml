@@ -1,4 +1,4 @@
-name: Resolve merge conflicts
+ame: Resolve merge conflicts
 
 on:
   workflow_dispatch:
@@ -22,6 +22,12 @@ jobs:
     outputs:
       should_run: ${{ steps.gate.outputs.should_run }}
     steps:
+      - name: Reject dispatch from non-default branch
+        if: github.event_name == 'workflow_dispatch' && github.ref_name != github.event.repository.default_branch
+        run: |
+          echo "workflow_dispatch is only allowed from ${{ github.event.repository.default_branch }} (got ${{ github.ref_name }})"
+          exit 1
+
       - name: Calculate the 15-hour slot
         id: slot
         run: echo "key=merge-conflict-resolver-$(( $(date -u +%s) / 54000 ))" >> "$GITHUB_OUTPUT"
@@ -95,6 +101,9 @@ jobs:
               if (pr.labels.some(label => label.name === 'no-autofix')) {
                 continue;
               }
+              if (!pr.labels.some(label => label.name === 'auto-resolve-conflicts')) {
+                continue;
+              }
               const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner, repo, username: pr.user.login,
               });
@@ -157,6 +166,10 @@ jobs:
               core.setFailed('PR now has the no-autofix label.');
               return;
             }
+            if (!pr.labels.some(label => label.name === 'auto-resolve-conflicts')) {
+              core.setFailed('PR no longer has the auto-resolve-conflicts label.');
+              return;
+            }
             const { data: access } = await github.rest.repos.getCollaboratorPermissionLevel({
               owner, repo, username: pr.user.login,
             });
@@ -202,9 +215,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BASE_SHA: ${{ steps.ctx.outputs.base_sha }}
         run: |
-          BOT_ID=$(gh api 'users/resolver-akshatgupta%5Bbot%5D' --jq '.id')
-          git -C pr config user.name "resolver-akshatgupta[bot]"
-          git -C pr config user.email "${BOT_ID}+resolver-akshatgupta[bot]@users.noreply.github.com"
+          BOT_ID=$(gh api 'users/braincompany-ci-failure-autofix%5Bbot%5D' --jq '.id')
+          git -C pr config user.name "braincompany-ci-failure-autofix[bot]"
+          git -C pr config user.email "${BOT_ID}+braincompany-ci-failure-autofix[bot]@users.noreply.github.com"
           git -C pr fetch --no-tags origin "$BASE_SHA"
 
       - name: Resolve only conflict blocks
@@ -299,6 +312,7 @@ jobs:
               pr.head.sha !== process.env.EXPECTED_HEAD ||
               baseBranch.commit.sha !== process.env.EXPECTED_BASE ||
               pr.labels.some(label => label.name === 'no-autofix') ||
+              !pr.labels.some(label => label.name === 'auto-resolve-conflicts') ||
               !['admin', 'maintain', 'write'].includes(access.permission)
             ) {
               core.setFailed('PR head, base, state, repository, or author access changed.');
