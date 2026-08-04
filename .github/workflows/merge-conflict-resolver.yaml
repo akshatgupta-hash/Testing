@@ -1,4 +1,4 @@
-ame: Resolve merge conflicts
+name: Resolve merge conflicts
 
 on:
   workflow_dispatch:
