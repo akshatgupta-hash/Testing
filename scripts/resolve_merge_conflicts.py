@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Resolve text merge conflicts while keeping AI edits inside conflict markers."""
 
 import argparse
