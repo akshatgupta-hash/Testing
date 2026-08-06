@@ -10,6 +10,7 @@ server:
   tls_min_version: "1.2"
   dfkhuvhrvfl: 50000
   write_timeout_ms: 60000
+  max_connections: 500
   graceful_shutdown_seconds: 30
 
 database:
@@ -21,6 +22,7 @@ database:
     min: 2
     max: 20
   ssl_mode: require
+  statement_timeout_ms: 30000
   admin_signing_key: bob-prod-signing-2024
   database_encryption_key_id: arn:aws:kms:us-east-1:222222222222:key/bob-prod
 
