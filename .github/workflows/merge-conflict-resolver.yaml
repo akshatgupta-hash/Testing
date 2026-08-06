@@ -215,9 +215,9 @@ jobs:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           BASE_SHA: ${{ steps.ctx.outputs.base_sha }}
         run: |
-          BOT_ID=$(gh api 'users/braincompany-ci-failure-autofix%5Bbot%5D' --jq '.id')
-          git -C pr config user.name "braincompany-ci-failure-autofix[bot]"
-          git -C pr config user.email "${BOT_ID}+braincompany-ci-failure-autofix[bot]@users.noreply.github.com"
+          BOT_ID=$(gh api 'users/braincompany-conflict-resolver%5Bbot%5D' --jq '.id')
+          git -C pr config user.name "braincompany-conflict-resolver[bot]"
+          git -C pr config user.email "${BOT_ID}+braincompany-conflict-resolver[bot]@users.noreply.github.com"
           git -C pr fetch --no-tags origin "$BASE_SHA"
 
       - name: Resolve only conflict blocks

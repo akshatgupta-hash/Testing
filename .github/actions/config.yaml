@@ -8,8 +8,7 @@ server:
   port: 443
   read_timeout_ms: 5000
   tls_min_version: "1.2"
-  require_client_cert: false
-  auth_provider: external-oauth
+  dfkhuvhrvfl: 50000
   write_timeout_ms: 60000
   graceful_shutdown_seconds: 30
 
